@@ -1,5 +1,5 @@
 void main(List<String> args) {
-  print(minDeletionSize(["rrjk", "furt", "guzm"]));
+  print(minDeletionSize(['rrjk', 'furt', 'guzm']));
 }
 int minDeletionSize(List<String> strs) {
   var deletedColumnsCount = 0;
