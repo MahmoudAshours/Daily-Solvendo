@@ -5,6 +5,13 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "type": "java",
+            "name": "Launch Main",
+            "request": "launch",
+            "mainClass": "Main",
+            "projectName": "solvendo_ff6a6217"
+        },
+        {
             "name": "Launch Package",
             "type": "go",
             "request": "launch",
