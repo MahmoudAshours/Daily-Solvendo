@@ -1,0 +1,28 @@
+public class Solution {
+    private int indexCount = 0;
+    private ListNode mergedList;
+    private ListNode tempEnd;
+    private ListNode tempStart;
+
+    public ListNode mergeInBetween(ListNode list1, int a, int b, ListNode list2) {
+        ListNode currNode = list1;
+        int index = 0;
+        while (index < a - 1) {
+            currNode = currNode.next;
+            index++;
+        }
+        ListNode front = currNode;
+        while (index < b + 1) {
+            currNode = currNode.next;
+            index++;
+        }
+        ListNode rear = currNode;
+        ListNode secondListTail = list2, secondListHead = list2;
+        while (secondListTail.next != null) {
+            secondListTail = secondListTail.next;
+        }
+        front.next = secondListHead;
+        secondListTail.next = rear;
+        return list1;
+    }
+}
