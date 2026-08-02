@@ -374,6 +374,36 @@ def render_readme(selected: Selected, run_date: date) -> str:
 """
 
 
+def ensure_generated_files(target: Path, selected: Selected, run_date: date) -> None:
+    readme = target / "README.md"
+    solution = target / "solution.go"
+    marker = (
+        f"daily-problem: date={run_date.isoformat()} company={selected.company} "
+        f"id={selected.problem.problem_id}"
+    )
+    if target.exists():
+        if not target.is_dir():
+            raise GeneratorError(f"Refusing to overwrite existing folder: {target}")
+        if readme.exists():
+            if not readme.is_file() or marker not in readme.read_text(encoding="utf-8"):
+                raise GeneratorError(f"Refusing to overwrite existing folder: {target}")
+        else:
+            readme.write_text(render_readme(selected, run_date), encoding="utf-8")
+        if not solution.exists():
+            solution.write_text(selected.solution, encoding="utf-8")
+        elif not solution.is_file():
+            raise GeneratorError(f"Refusing to overwrite existing folder: {target}")
+        return
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="solvendo-problem-") as temp_dir:
+        staged = Path(temp_dir) / target.name
+        staged.mkdir()
+        (staged / "README.md").write_text(render_readme(selected, run_date), encoding="utf-8")
+        (staged / "solution.go").write_text(selected.solution, encoding="utf-8")
+        shutil.move(str(staged), str(target))
+
+
 def load_state(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {"version": 1, "runs": {}}
@@ -501,24 +531,7 @@ def generate_pair(
     save_state(state_path, state)
     for index, item in enumerate(selected):
         target = folder_from_state(repo_root, run["problems"][index], run_date, item)
-        marker = (
-            f"daily-problem: date={date_key} company={item.company} "
-            f"id={item.problem.problem_id}"
-        )
-        if target.exists():
-            readme = target / "README.md"
-            if not readme.is_file() or marker not in readme.read_text(encoding="utf-8"):
-                raise GeneratorError(f"Refusing to overwrite existing folder: {target}")
-        else:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.TemporaryDirectory(prefix="solvendo-problem-") as temp_dir:
-                staged = Path(temp_dir) / target.name
-                staged.mkdir()
-                (staged / "README.md").write_text(
-                    render_readme(item, run_date), encoding="utf-8"
-                )
-                (staged / "solution.go").write_text(item.solution, encoding="utf-8")
-                shutil.move(str(staged), str(target))
+        ensure_generated_files(target, item, run_date)
         remove_generated_sidecars(target)
         run["problems"][index]["generated"] = True
         save_state(state_path, state)

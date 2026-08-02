@@ -349,6 +349,49 @@ func reverseList(head *ListNode) *ListNode {
             self.assertTrue((fixture.root / amazon_folder / "README.md").is_file())
             self.assertFalse((fixture.root / "2026" / f"2. {renamed_title}").exists())
 
+    def test_recovery_recreates_missing_generated_files_in_existing_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = RepositoryFixture(Path(temp_dir))
+            fixture.populate()
+            state_path = fixture.root / "automation" / "state.json"
+
+            def fetch(problem: daily.Problem) -> daily.Details:
+                if problem.problem_id == "1":
+                    raise daily.CandidateUnavailable("paid-only")
+                return details(problem.title)
+
+            daily.generate_pair(
+                fixture.root,
+                daily.date(2026, 8, 2),
+                state_path,
+                fetcher=fetch,
+                validate_go=False,
+            )
+
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            run = state["runs"]["2026-08-02"]
+            run["status"] = "planned"
+            run["completed_at"] = None
+            run["problems"][0]["generated"] = False
+            amazon_folder = fixture.root / run["problems"][0]["folder"]
+            readme_path = amazon_folder / "README.md"
+            solution_path = amazon_folder / "solution.go"
+            readme_contents = readme_path.read_text(encoding="utf-8")
+            solution_path.unlink()
+            readme_path.unlink()
+            state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+            daily.generate_pair(
+                fixture.root,
+                daily.date(2026, 8, 2),
+                state_path,
+                fetcher=fetch,
+                validate_go=False,
+            )
+
+            self.assertEqual(readme_path.read_text(encoding="utf-8"), readme_contents)
+            self.assertTrue(solution_path.is_file())
+
 
 if __name__ == "__main__":
     unittest.main()
