@@ -392,6 +392,49 @@ func reverseList(head *ListNode) *ListNode {
             self.assertEqual(readme_path.read_text(encoding="utf-8"), readme_contents)
             self.assertTrue(solution_path.is_file())
 
+    def test_recovery_rejects_unvalidated_existing_solution_without_readme(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = RepositoryFixture(Path(temp_dir))
+            fixture.populate()
+            state_path = fixture.root / "automation" / "state.json"
+
+            def fetch(problem: daily.Problem) -> daily.Details:
+                if problem.problem_id == "1":
+                    raise daily.CandidateUnavailable("paid-only")
+                return details(problem.title)
+
+            daily.generate_pair(
+                fixture.root,
+                daily.date(2026, 8, 2),
+                state_path,
+                fetcher=fetch,
+                validate_go=False,
+            )
+
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            run = state["runs"]["2026-08-02"]
+            run["status"] = "planned"
+            run["completed_at"] = None
+            run["problems"][0]["generated"] = False
+            amazon_folder = fixture.root / run["problems"][0]["folder"]
+            readme_path = amazon_folder / "README.md"
+            solution_path = amazon_folder / "solution.go"
+            readme_path.unlink()
+            original_solution = solution_path.read_text(encoding="utf-8")
+            state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(daily.GeneratorError, "Refusing to overwrite existing folder"):
+                daily.generate_pair(
+                    fixture.root,
+                    daily.date(2026, 8, 2),
+                    state_path,
+                    fetcher=fetch,
+                    validate_go=False,
+                )
+
+            self.assertFalse(readme_path.exists())
+            self.assertEqual(solution_path.read_text(encoding="utf-8"), original_solution)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -384,12 +384,16 @@ def ensure_generated_files(target: Path, selected: Selected, run_date: date) -> 
     if target.exists():
         if not target.is_dir():
             raise GeneratorError(f"Refusing to overwrite existing folder: {target}")
-        if readme.exists():
+        readme_exists = readme.exists()
+        solution_exists = solution.exists()
+        if readme_exists:
             if not readme.is_file() or marker not in readme.read_text(encoding="utf-8"):
                 raise GeneratorError(f"Refusing to overwrite existing folder: {target}")
+        elif solution_exists:
+            raise GeneratorError(f"Refusing to overwrite existing folder: {target}")
         else:
             readme.write_text(render_readme(selected, run_date), encoding="utf-8")
-        if not solution.exists():
+        if not solution_exists:
             solution.write_text(selected.solution, encoding="utf-8")
         elif not solution.is_file():
             raise GeneratorError(f"Refusing to overwrite existing folder: {target}")
