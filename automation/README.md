@@ -8,22 +8,28 @@ numbered problem folder.
 
 ## Commands
 
-Preview today's pair without writing files:
-
-```sh
-python3 automation/daily_problem.py --dry-run
-```
-
-Generate today's pair manually:
-
-```sh
-python3 automation/daily_problem.py
-```
-
-Install or refresh the macOS launch agent:
+Install or refresh both the CLI and macOS launch agent:
 
 ```sh
 ./automation/install_launch_agent.sh
+```
+
+Generate today's pair if it is missing, or display the existing pair:
+
+```sh
+daily-problem get
+```
+
+Display today's saved state without contacting LeetCode:
+
+```sh
+daily-problem status
+```
+
+Preview today's pair without writing files:
+
+```sh
+daily-problem get --dry-run
 ```
 
 The launch agent polls hourly and the generator only creates a pair after the
@@ -36,3 +42,6 @@ Each `solution.go` preserves the exact LeetCode function signature, fills empty
 bodies with `panic("TODO")`, and includes a marked LeetCode section plus a
 local `main()` harness. Copy only the marked solution section into the LeetCode
 editor.
+
+For compatibility, running `python3 automation/daily_problem.py` without a
+subcommand behaves like `daily-problem get`.

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from datetime import datetime
 from pathlib import Path
+from unittest import mock
 
 
 AUTOMATION_DIR = Path(__file__).resolve().parents[1]
@@ -152,6 +155,108 @@ func reverseList(head *ListNode) *ListNode {
 
     def test_launchd_uses_hourly_polling_for_cairo_schedule(self) -> None:
         self.assertEqual(daily.launchd_poll_interval_seconds(), 3600)
+
+    def test_cli_get_generates_missing_pair_and_prints_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = RepositoryFixture(Path(temp_dir))
+            fixture.populate()
+
+            def fetch(problem: daily.Problem) -> daily.Details:
+                if problem.problem_id == "1":
+                    raise daily.CandidateUnavailable("paid-only")
+                return details(problem.title)
+
+            original_generate = daily.generate_pair
+
+            def generate_with_fake_fetch(*args: object, **kwargs: object) -> list[daily.Selected]:
+                kwargs["fetcher"] = fetch
+                kwargs["validate_go"] = False
+                return original_generate(*args, **kwargs)
+
+            output = io.StringIO()
+            with mock.patch.object(daily, "generate_pair", side_effect=generate_with_fake_fetch):
+                with redirect_stdout(output):
+                    result = daily.main(
+                        [
+                            "--repo-root",
+                            str(fixture.root),
+                            "--now",
+                            "2026-08-02T10:00:00+03:00",
+                            "get",
+                        ]
+                    )
+            rendered = output.getvalue()
+            self.assertEqual(result, 0)
+            self.assertIn("Daily problems for 2026-08-02 (complete)", rendered)
+            self.assertIn("Amazon: 2. Amazon Pick", rendered)
+            self.assertIn("Microsoft: 3. Shared", rendered)
+            self.assertIn("Difficulty:", rendered)
+            self.assertIn("LeetCode:", rendered)
+            self.assertIn("README:", rendered)
+            self.assertIn("Solution:", rendered)
+
+    def test_cli_get_shows_existing_pair_without_network(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = RepositoryFixture(Path(temp_dir))
+            fixture.populate()
+            state_path = fixture.root / "automation" / "state.json"
+
+            def fetch(problem: daily.Problem) -> daily.Details:
+                if problem.problem_id == "1":
+                    raise daily.CandidateUnavailable("paid-only")
+                return details(problem.title)
+
+            daily.generate_pair(
+                fixture.root,
+                daily.date(2026, 8, 2),
+                state_path,
+                fetcher=fetch,
+                validate_go=False,
+            )
+            output = io.StringIO()
+            with mock.patch.object(
+                daily.urllib.request,
+                "urlopen",
+                side_effect=AssertionError("existing get must not contact LeetCode"),
+            ):
+                with redirect_stdout(output):
+                    result = daily.main(
+                        [
+                            "--repo-root",
+                            str(fixture.root),
+                            "--now",
+                            "2026-08-02T11:00:00+03:00",
+                            "get",
+                        ]
+                    )
+            self.assertEqual(result, 0)
+            self.assertIn("Daily pair already generated", output.getvalue())
+            self.assertIn("Daily problems for 2026-08-02 (complete)", output.getvalue())
+
+    def test_cli_status_reports_missing_without_network(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = RepositoryFixture(Path(temp_dir))
+            fixture.populate()
+            output = io.StringIO()
+            with redirect_stdout(output):
+                result = daily.main(
+                    [
+                        "--repo-root",
+                        str(fixture.root),
+                        "--now",
+                        "2026-08-02T11:00:00+03:00",
+                        "status",
+                    ]
+                )
+            self.assertEqual(result, 0)
+            self.assertIn("Daily problems for 2026-08-02 (missing)", output.getvalue())
+            self.assertIn("No daily pair has been generated", output.getvalue())
+
+    def test_legacy_scheduled_flags_still_parse(self) -> None:
+        parser = daily.build_parser()
+        args = parser.parse_args(["--scheduled", "--schedule-hour", "9"])
+        self.assertTrue(args.legacy_scheduled)
+        self.assertEqual(args.legacy_schedule_hour, 9)
 
     def test_pair_generation_is_distinct_idempotent_and_recoverable(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

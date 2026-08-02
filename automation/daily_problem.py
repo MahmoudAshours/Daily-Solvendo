@@ -89,6 +89,18 @@ class Selected:
     solution: str
 
 
+@dataclass(frozen=True)
+class ProblemSummary:
+    company: str
+    problem_id: str
+    title: str
+    difficulty: str
+    link: str
+    readme_path: Path
+    solution_path: Path
+    generated: bool
+
+
 def load_catalog(repo_root: Path) -> dict[str, Problem]:
     catalog: dict[str, Problem] = {}
     for company, filename in COMPANY_FILES.items():
@@ -326,7 +338,12 @@ def folder_for(repo_root: Path, run_date: date, selected: Selected) -> Path:
 def folder_from_state(repo_root: Path, item: dict[str, Any], run_date: date, selected: Selected) -> Path:
     stored_folder = item.get("folder")
     if isinstance(stored_folder, str) and stored_folder:
-        return repo_root / stored_folder
+        target = (repo_root / stored_folder).resolve()
+        try:
+            target.relative_to(repo_root.resolve())
+        except ValueError as exc:
+            raise GeneratorError(f"State folder escapes the repository: {stored_folder}") from exc
+        return target
     return folder_for(repo_root, run_date, selected)
 
 
@@ -437,6 +454,7 @@ def generate_pair(
     fetcher: Callable[[Problem], Details] = fetch_details,
     validate_go: bool = True,
 ) -> list[Selected]:
+    repo_root = repo_root.resolve()
     catalog = load_catalog(repo_root)
     state = load_state(state_path)
     date_key = run_date.isoformat()
@@ -477,11 +495,6 @@ def generate_pair(
         }
 
     if dry_run:
-        for item in selected:
-            print(
-                f"{item.company}: {item.problem.problem_id}. {item.details.title} "
-                f"({item.problem.link})"
-            )
         return selected
 
     state["runs"][date_key] = run
@@ -516,6 +529,92 @@ def generate_pair(
     return selected
 
 
+def summaries_for_date(
+    repo_root: Path, state_path: Path, run_date: date
+) -> tuple[str, list[ProblemSummary]]:
+    repo_root = repo_root.resolve()
+    state = load_state(state_path)
+    run = state["runs"].get(run_date.isoformat())
+    if not run:
+        return "missing", []
+    catalog = load_catalog(repo_root)
+    summaries: list[ProblemSummary] = []
+    for item in run.get("problems", []):
+        problem_id = str(item.get("id", ""))
+        problem = catalog.get(problem_id)
+        if not problem:
+            raise GeneratorError(f"State problem {problem_id!r} is no longer in the CSV files")
+        stored_folder = item.get("folder")
+        if not isinstance(stored_folder, str) or not stored_folder:
+            raise GeneratorError(f"State problem {problem_id} has no folder")
+        folder = (repo_root / stored_folder).resolve()
+        try:
+            folder.relative_to(repo_root.resolve())
+        except ValueError as exc:
+            raise GeneratorError(f"State folder escapes the repository: {stored_folder}") from exc
+        readme_path = folder / "README.md"
+        solution_path = folder / "solution.go"
+        summaries.append(
+            ProblemSummary(
+                company=str(item.get("company", "Unknown")),
+                problem_id=problem.problem_id,
+                title=problem.title,
+                difficulty=problem.difficulty,
+                link=problem.link,
+                readme_path=readme_path,
+                solution_path=solution_path,
+                generated=bool(item.get("generated"))
+                and readme_path.is_file()
+                and solution_path.is_file(),
+            )
+        )
+    return str(run.get("status", "unknown")), summaries
+
+
+def selected_summaries(
+    repo_root: Path, run_date: date, selected: list[Selected]
+) -> list[ProblemSummary]:
+    return [
+        ProblemSummary(
+            company=item.company,
+            problem_id=item.problem.problem_id,
+            title=item.details.title,
+            difficulty=item.details.difficulty,
+            link=item.problem.link,
+            readme_path=folder_for(repo_root, run_date, item) / "README.md",
+            solution_path=folder_for(repo_root, run_date, item) / "solution.go",
+            generated=False,
+        )
+        for item in selected
+    ]
+
+
+def print_summary(run_date: date, status: str, summaries: list[ProblemSummary]) -> None:
+    print(f"Daily problems for {run_date.isoformat()} ({status})")
+    if not summaries:
+        print("No daily pair has been generated.")
+        return
+    for summary in summaries:
+        print(f"\n{summary.company}: {summary.problem_id}. {summary.title}")
+        print(f"  Difficulty: {summary.difficulty}")
+        print(f"  LeetCode: {summary.link}")
+        print(f"  README: {summary.readme_path}")
+        print(f"  Solution: {summary.solution_path}")
+        if status != "complete" or not summary.generated:
+            print(f"  Files ready: {'yes' if summary.generated else 'no'}")
+
+
+def require_complete_pair(
+    run_date: date, status: str, summaries: list[ProblemSummary]
+) -> None:
+    if (
+        status != "complete"
+        or len(summaries) != len(COMPANY_FILES)
+        or not all(item.generated for item in summaries)
+    ):
+        raise GeneratorError(f"Daily pair for {run_date.isoformat()} is incomplete")
+
+
 def parse_now(value: str | None) -> datetime:
     if value is None:
         return datetime.now(TIMEZONE)
@@ -533,39 +632,85 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path(__file__).resolve().parent.parent,
         help="Repository root (defaults to the parent of automation/).",
     )
-    parser.add_argument("--dry-run", action="store_true", help="Select and validate without writing.")
-    parser.add_argument(
-        "--scheduled",
-        action="store_true",
-        help="Apply launch-agent missed-run and idempotency rules.",
-    )
-    parser.add_argument("--schedule-hour", type=int, default=9)
     parser.add_argument(
         "--now",
         help="Override the current ISO date/time for deterministic testing.",
     )
     parser.add_argument("--skip-go-check", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--dry-run", dest="legacy_dry_run", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--scheduled", dest="legacy_scheduled", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--schedule-hour", dest="legacy_schedule_hour", type=int, help=argparse.SUPPRESS)
+
+    commands = parser.add_subparsers(dest="command")
+    get_parser = commands.add_parser(
+        "get", help="Generate today's pair if missing, then display it."
+    )
+    get_parser.add_argument(
+        "--dry-run", dest="get_dry_run", action="store_true", help="Preview without writing files."
+    )
+    commands.add_parser("status", help="Display today's saved pair and state.")
+    scheduled_parser = commands.add_parser(
+        "run-scheduled", help="Run once using scheduler cutoff and catch-up rules."
+    )
+    scheduled_parser.add_argument("--schedule-hour", type=int, default=9)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if not 0 <= args.schedule_hour <= 23:
-        raise GeneratorError("--schedule-hour must be between 0 and 23")
+    command = args.command
+    if command is None:
+        command = "run-scheduled" if args.legacy_scheduled else "get"
     repo_root = args.repo_root.resolve()
     state_path = repo_root / "automation" / "state.json"
     now = parse_now(args.now)
+
+    if command == "status":
+        status, summaries = summaries_for_date(repo_root, state_path, now.date())
+        print_summary(now.date(), status, summaries)
+        return 0
+
+    if command == "get":
+        dry_run = bool(args.legacy_dry_run or getattr(args, "get_dry_run", False))
+        existing_status, existing_summaries = summaries_for_date(
+            repo_root, state_path, now.date()
+        )
+        if dry_run and existing_status == "complete":
+            print_summary(now.date(), existing_status, existing_summaries)
+            return 0
+        selected = generate_pair(
+            repo_root,
+            now.date(),
+            state_path,
+            dry_run=dry_run,
+            validate_go=not args.skip_go_check,
+        )
+        if dry_run:
+            print_summary(now.date(), "preview", selected_summaries(repo_root, now.date(), selected))
+        else:
+            status, summaries = summaries_for_date(repo_root, state_path, now.date())
+            require_complete_pair(now.date(), status, summaries)
+            print_summary(now.date(), status, summaries)
+        return 0
+
+    schedule_hour = getattr(args, "schedule_hour", None)
+    if schedule_hour is None:
+        schedule_hour = args.legacy_schedule_hour if args.legacy_schedule_hour is not None else 9
+    if not 0 <= schedule_hour <= 23:
+        raise GeneratorError("--schedule-hour must be between 0 and 23")
     state = load_state(state_path)
-    if args.scheduled and not scheduled_run_is_due(state, now, args.schedule_hour):
+    if not scheduled_run_is_due(state, now, schedule_hour):
         print("No missed or current daily run is due.")
         return 0
     generate_pair(
         repo_root,
         now.date(),
         state_path,
-        dry_run=args.dry_run,
         validate_go=not args.skip_go_check,
     )
+    status, summaries = summaries_for_date(repo_root, state_path, now.date())
+    require_complete_pair(now.date(), status, summaries)
+    print_summary(now.date(), status, summaries)
     return 0
 
 
