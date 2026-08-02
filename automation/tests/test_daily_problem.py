@@ -30,7 +30,7 @@ def details(title: str) -> daily.Details:
         title=title,
         content=f"<p>{title} statement</p>",
         difficulty="Medium",
-        go_code="func solve(value int) int {\n    \n}",
+        go_code="func solve(value int) int {\n    return value\n}",
     )
 
 
@@ -108,14 +108,20 @@ class DailyProblemTests(unittest.TestCase):
  * }
  */
 func reverseList(head *ListNode) *ListNode {
-
+    return head
 }"""
         )
         self.assertIn("package main", solution)
         self.assertIn("type ListNode struct", solution)
-        self.assertIn("panic(\"TODO\")", solution)
+        self.assertIn("return head", solution)
         self.assertIn("func main()", solution)
         self.assertIn("LEETCODE SOLUTION BEGIN", solution)
+
+    def test_solution_preserves_exact_leetcode_function_body(self) -> None:
+        go_code = "func solve(value int) int {\n    return value\n}"
+        solution = daily.build_solution(go_code, validate=False)
+        self.assertIn(go_code, solution)
+        self.assertNotIn("panic(\"TODO\")", solution)
 
     def test_schedule_handles_daily_and_missed_runs(self) -> None:
         complete_yesterday = {
@@ -143,6 +149,9 @@ func reverseList(head *ListNode) *ListNode {
             daily.remove_generated_sidecars(target)
             self.assertFalse((target / "._README.md").exists())
             self.assertFalse((parent / "._937. Problem").exists())
+
+    def test_launchd_uses_hourly_polling_for_cairo_schedule(self) -> None:
+        self.assertEqual(daily.launchd_poll_interval_seconds(), 3600)
 
     def test_pair_generation_is_distinct_idempotent_and_recoverable(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

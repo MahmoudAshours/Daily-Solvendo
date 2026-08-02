@@ -23,13 +23,8 @@
         <key>TZ</key>
         <string>Africa/Cairo</string>
     </dict>
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>9</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
+    <key>StartInterval</key>
+    <integer>__START_INTERVAL__</integer>
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>

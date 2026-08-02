@@ -25,9 +25,10 @@ Install or refresh the macOS launch agent:
 ./automation/install_launch_agent.sh
 ```
 
-The agent runs at 09:00 in the Mac's local timezone. `RunAtLoad` also invokes the
-generator after login; its state file prevents duplicate runs and allows a missed
-scheduled run to be created after startup. Logs are written to
+The launch agent polls hourly and the generator only creates a pair after the
+09:00 Africa/Cairo cutoff. `RunAtLoad` also invokes the generator after login;
+its state file prevents duplicate runs and allows a missed scheduled run to be
+created after startup without backlogging older days. Logs are written to
 `~/Library/Logs/solvendo/`.
 
 Each `solution.go` has a marked LeetCode section and a local `main()` harness.
