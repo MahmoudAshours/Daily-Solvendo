@@ -190,6 +190,12 @@ def fetch_details(problem: Problem, timeout: int = 20) -> Details:
     )
 
 
+def _inject_todo_bodies(go_code: str) -> str:
+    """Keep LeetCode signatures intact while making empty starters compile locally."""
+    pattern = re.compile(r"(?ms)(^func[^\{]*\{)([ \t\r\n]*)(\})")
+    return pattern.sub(r'\1\n\tpanic("TODO")\n\3', go_code)
+
+
 def _local_support_types(go_code: str) -> str:
     without_comments = re.sub(r"/\*.*?\*/", "", go_code, flags=re.DOTALL)
     without_comments = re.sub(r"//.*", "", without_comments)
@@ -240,7 +246,7 @@ def _find_tool(name: str) -> str | None:
 
 
 def build_solution(go_code: str, validate: bool = True) -> str:
-    scaffold = go_code.strip()
+    scaffold = _inject_todo_bodies(go_code.strip())
     source = (
         "package main\n\n"
         + _local_support_types(scaffold)
@@ -249,13 +255,21 @@ def build_solution(go_code: str, validate: bool = True) -> str:
         + "\n// LEETCODE SOLUTION END\n\n"
         + "func main() {\n\t// TODO: add local test cases.\n}\n"
     )
+    gofmt = _find_tool("gofmt")
+    if not gofmt:
+        raise GeneratorError("gofmt was not found")
+    formatted = subprocess.run(
+        [gofmt], input=source, text=True, capture_output=True, check=False
+    )
+    if formatted.returncode:
+        raise CandidateUnavailable(f"Go starter cannot be formatted: {formatted.stderr.strip()}")
     if validate:
         go = _find_tool("go")
         if not go:
             raise GeneratorError("go was not found")
         with tempfile.TemporaryDirectory(prefix="solvendo-go-check-") as temp_dir:
             solution_path = Path(temp_dir) / "solution.go"
-            solution_path.write_text(source, encoding="utf-8")
+            solution_path.write_text(formatted.stdout, encoding="utf-8")
             checked = subprocess.run(
                 [go, "test", "solution.go"],
                 cwd=temp_dir,
@@ -267,7 +281,7 @@ def build_solution(go_code: str, validate: bool = True) -> str:
             if checked.returncode:
                 reason = checked.stderr.strip() or checked.stdout.strip()
                 raise CandidateUnavailable(f"Go starter does not compile locally: {reason}")
-    return source
+    return formatted.stdout
 
 
 def select_problem(

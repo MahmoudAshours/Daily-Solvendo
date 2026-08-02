@@ -30,7 +30,7 @@ def details(title: str) -> daily.Details:
         title=title,
         content=f"<p>{title} statement</p>",
         difficulty="Medium",
-        go_code="func solve(value int) int {\n    return value\n}",
+        go_code="func solve(value int) int {\n\n}",
     )
 
 
@@ -108,20 +108,20 @@ class DailyProblemTests(unittest.TestCase):
  * }
  */
 func reverseList(head *ListNode) *ListNode {
-    return head
+
 }"""
         )
         self.assertIn("package main", solution)
         self.assertIn("type ListNode struct", solution)
-        self.assertIn("return head", solution)
+        self.assertIn("panic(\"TODO\")", solution)
         self.assertIn("func main()", solution)
         self.assertIn("LEETCODE SOLUTION BEGIN", solution)
 
-    def test_solution_preserves_exact_leetcode_function_body(self) -> None:
-        go_code = "func solve(value int) int {\n    return value\n}"
+    def test_solution_preserves_signature_and_adapts_empty_body(self) -> None:
+        go_code = "func solve(value int) int {\n\n}"
         solution = daily.build_solution(go_code, validate=False)
-        self.assertIn(go_code, solution)
-        self.assertNotIn("panic(\"TODO\")", solution)
+        self.assertIn("func solve(value int) int", solution)
+        self.assertIn("panic(\"TODO\")", solution)
 
     def test_schedule_handles_daily_and_missed_runs(self) -> None:
         complete_yesterday = {
