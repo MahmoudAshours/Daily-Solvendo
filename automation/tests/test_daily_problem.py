@@ -192,6 +192,58 @@ func reverseList(head *ListNode) *ListNode {
             state = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertEqual(state["runs"]["2026-08-02"]["status"], "complete")
 
+    def test_recovery_uses_planned_folder_when_title_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = RepositoryFixture(Path(temp_dir))
+            fixture.populate()
+            state_path = fixture.root / "automation" / "state.json"
+            original_title = "Amazon Pick"
+            renamed_title = "Amazon Pick Renamed"
+            microsoft_title = "Shared"
+            calls: dict[str, int] = {"1": 0, "2": 0, "3": 0}
+
+            def fetch(problem: daily.Problem) -> daily.Details:
+                calls[problem.problem_id] += 1
+                if problem.problem_id == "1":
+                    raise daily.CandidateUnavailable("paid-only")
+                if problem.problem_id == "2":
+                    title = original_title if calls["2"] == 1 else renamed_title
+                    return details(title)
+                return details(microsoft_title)
+
+            selected = daily.generate_pair(
+                fixture.root,
+                daily.date(2026, 8, 2),
+                state_path,
+                fetcher=fetch,
+                validate_go=False,
+            )
+            self.assertEqual([item.problem.problem_id for item in selected], ["2", "3"])
+
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            run = state["runs"]["2026-08-02"]
+            run["status"] = "planned"
+            run["completed_at"] = None
+            run["problems"][0]["generated"] = False
+            amazon_folder = run["problems"][0]["folder"]
+            readme_path = fixture.root / amazon_folder / "README.md"
+            solution_path = fixture.root / amazon_folder / "solution.go"
+            readme_path.unlink()
+            solution_path.unlink()
+            (fixture.root / amazon_folder).rmdir()
+            state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+            recovered = daily.generate_pair(
+                fixture.root,
+                daily.date(2026, 8, 2),
+                state_path,
+                fetcher=fetch,
+                validate_go=False,
+            )
+            self.assertEqual([item.details.title for item in recovered], [renamed_title, microsoft_title])
+            self.assertTrue((fixture.root / amazon_folder / "README.md").is_file())
+            self.assertFalse((fixture.root / "2026" / f"2. {renamed_title}").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

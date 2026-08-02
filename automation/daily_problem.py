@@ -323,6 +323,13 @@ def folder_for(repo_root: Path, run_date: date, selected: Selected) -> Path:
     return repo_root / str(run_date.year) / f"{selected.problem.problem_id}. {title}"
 
 
+def folder_from_state(repo_root: Path, item: dict[str, Any], run_date: date, selected: Selected) -> Path:
+    stored_folder = item.get("folder")
+    if isinstance(stored_folder, str) and stored_folder:
+        return repo_root / stored_folder
+    return folder_for(repo_root, run_date, selected)
+
+
 def render_readme(selected: Selected, run_date: date) -> str:
     problem = selected.problem
     company_tags = ", ".join(problem.companies)
@@ -480,7 +487,7 @@ def generate_pair(
     state["runs"][date_key] = run
     save_state(state_path, state)
     for index, item in enumerate(selected):
-        target = folder_for(repo_root, run_date, item)
+        target = folder_from_state(repo_root, run["problems"][index], run_date, item)
         marker = (
             f"daily-problem: date={date_key} company={item.company} "
             f"id={item.problem.problem_id}"
