@@ -2,6 +2,9 @@
 
 This repository contains my solutions to LeetCode problems.
 
+Daily automation for the Amazon and Microsoft practice pair lives in
+[`automation/README.md`](automation/README.md).
+
 Created with :heart: by [LeetPush](https://github.com/husamahmud/LeetPush)
 
  ## Made by 

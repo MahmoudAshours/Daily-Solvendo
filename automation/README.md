@@ -1,9 +1,10 @@
 # Daily LeetCode problems
 
 The generator creates one Amazon and one Microsoft problem each day under the
-current year. It chooses the highest-frequency unsolved free problem in each CSV,
-fetches the full statement and Go starter from LeetCode, and never overwrites an
-existing numbered problem folder.
+current year. It chooses two distinct highest-frequency unsolved free problems,
+one from each CSV, skips existing or unavailable entries, fetches the full
+statement and exact Go starter from LeetCode, and never overwrites an existing
+numbered problem folder.
 
 ## Commands
 
@@ -31,5 +32,7 @@ its state file prevents duplicate runs and allows a missed scheduled run to be
 created after startup without backlogging older days. Logs are written to
 `~/Library/Logs/solvendo/`.
 
-Each `solution.go` has a marked LeetCode section and a local `main()` harness.
-Copy only the marked solution section into the LeetCode editor.
+Each `solution.go` preserves the exact LeetCode function signature, fills empty
+bodies with `panic("TODO")`, and includes a marked LeetCode section plus a
+local `main()` harness. Copy only the marked solution section into the LeetCode
+editor.
