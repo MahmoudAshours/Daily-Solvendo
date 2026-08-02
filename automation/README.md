@@ -14,6 +14,9 @@ Install or refresh both the CLI and macOS launch agent:
 ./automation/install_launch_agent.sh
 ```
 
+The installer links `daily-problem` into `~/.local/bin` and refuses to replace
+an unrelated existing command there.
+
 Generate today's pair if it is missing, or display the existing pair:
 
 ```sh
@@ -41,7 +44,8 @@ created after startup without backlogging older days. Logs are written to
 Each `solution.go` preserves the exact LeetCode function signature, fills empty
 bodies with `panic("TODO")`, and includes a marked LeetCode section plus a
 local `main()` harness. Copy only the marked solution section into the LeetCode
-editor.
+editor. The automation scaffolds problems only; it does not solve or submit
+them.
 
 For compatibility, running `python3 automation/daily_problem.py` without a
 subcommand behaves like `daily-problem get`.
