@@ -1,0 +1,23 @@
+{
+  "runs": {
+    "2026-08-02": {
+      "completed_at": "2026-08-02T12:59:22+03:00",
+      "problems": [
+        {
+          "company": "Amazon",
+          "folder": "2026/937. Reorder Data in Log Files",
+          "generated": true,
+          "id": "937"
+        },
+        {
+          "company": "Microsoft",
+          "folder": "2026/1239. Maximum Length of a Concatenated String with Unique Characters",
+          "generated": true,
+          "id": "1239"
+        }
+      ],
+      "status": "complete"
+    }
+  },
+  "version": 1
+}
