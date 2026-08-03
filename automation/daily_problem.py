@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a daily Amazon and Microsoft LeetCode practice pair."""
+"""Generate an Amazon, Microsoft, and official LeetCode daily practice set."""
 
 from __future__ import annotations
 
@@ -28,6 +28,8 @@ COMPANY_FILES = {
     "Amazon": "amazon_6months.csv",
     "Microsoft": "microsoft_6months.csv",
 }
+DAILY_SOURCE = "LeetCode Daily"
+EXPECTED_SOURCES = (*COMPANY_FILES, DAILY_SOURCE)
 GRAPHQL_URL = "https://leetcode.com/graphql/"
 GRAPHQL_QUERY = """
 query questionData($titleSlug: String!) {
@@ -39,6 +41,24 @@ query questionData($titleSlug: String!) {
     difficulty
     isPaidOnly
     codeSnippets { langSlug code }
+  }
+}
+"""
+DAILY_GRAPHQL_QUERY = """
+query questionOfToday {
+  activeDailyCodingChallengeQuestion {
+    date
+    link
+    question {
+      questionFrontendId
+      title
+      titleSlug
+      content
+      difficulty
+      isPaidOnly
+      acRate
+      codeSnippets { langSlug code }
+    }
   }
 }
 """
@@ -202,6 +222,69 @@ def fetch_details(problem: Problem, timeout: int = 20) -> Details:
     )
 
 
+def fetch_daily_challenge(
+    run_date: date, timeout: int = 20, validate_go: bool = True
+) -> Selected:
+    payload = json.dumps({"query": DAILY_GRAPHQL_QUERY}).encode("utf-8")
+    request = urllib.request.Request(
+        GRAPHQL_URL,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "solvendo-daily-problem/1.0",
+            "Referer": "https://leetcode.com/problemset/",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            result = json.load(response)
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise GeneratorError(f"LeetCode Daily request failed: {exc}") from exc
+    if result.get("errors"):
+        raise GeneratorError("LeetCode returned GraphQL errors for the Daily Challenge")
+    challenge = result.get("data", {}).get("activeDailyCodingChallengeQuestion")
+    question = challenge.get("question") if challenge else None
+    if not challenge or not question:
+        raise GeneratorError("LeetCode Daily Challenge metadata is unavailable")
+    if question.get("isPaidOnly"):
+        raise GeneratorError("The LeetCode Daily Challenge is paid-only")
+    content = question.get("content")
+    go_code = next(
+        (
+            snippet.get("code")
+            for snippet in question.get("codeSnippets") or []
+            if snippet.get("langSlug") == "golang"
+        ),
+        None,
+    )
+    if not content or not go_code:
+        raise GeneratorError("The LeetCode Daily statement or Go starter is unavailable")
+    link = str(challenge.get("link") or "")
+    if link.startswith("/"):
+        link = f"https://leetcode.com{link}"
+    acceptance = question.get("acRate")
+    acceptance_text = f"{float(acceptance):.1f}%" if acceptance is not None else "N/A"
+    problem = Problem(
+        problem_id=str(question.get("questionFrontendId") or ""),
+        title=str(question.get("title") or "LeetCode Daily Challenge"),
+        acceptance=acceptance_text,
+        difficulty=str(question.get("difficulty") or "Unknown"),
+        link=link,
+    )
+    details = Details(
+        title=problem.title,
+        content=str(content),
+        difficulty=problem.difficulty,
+        go_code=str(go_code),
+    )
+    return Selected(
+        company=DAILY_SOURCE,
+        problem=problem,
+        details=details,
+        solution=build_solution(details.go_code, validate=validate_go),
+    )
+
+
 def _inject_todo_bodies(go_code: str) -> str:
     """Keep LeetCode signatures intact while making empty starters compile locally."""
     pattern = re.compile(r"(?ms)(^func[^\{]*\{)([ \t\r\n]*)(\})")
@@ -335,6 +418,13 @@ def folder_for(repo_root: Path, run_date: date, selected: Selected) -> Path:
     return repo_root / str(run_date.year) / f"{selected.problem.problem_id}. {title}"
 
 
+def folder_for_new_problem(repo_root: Path, run_date: date, selected: Selected) -> Path:
+    target = folder_for(repo_root, run_date, selected)
+    if selected.company == DAILY_SOURCE and target.exists():
+        target = target.with_name(f"{target.name} [LeetCode Daily]")
+    return target
+
+
 def folder_from_state(repo_root: Path, item: dict[str, Any], run_date: date, selected: Selected) -> Path:
     stored_folder = item.get("folder")
     if isinstance(stored_folder, str) and stored_folder:
@@ -354,15 +444,18 @@ def render_readme(selected: Selected, run_date: date) -> str:
         f"- **{company} frequency:** {problem.frequencies[company]:.6g}"
         for company in problem.companies
     )
+    source_rows = f"- **Selected for:** {selected.company}"
+    if company_tags:
+        source_rows = f"- **Company lists:** {company_tags}\n{source_rows}"
+    if frequency_rows:
+        source_rows = f"{source_rows}\n{frequency_rows}"
     return f"""<!-- daily-problem: date={run_date.isoformat()} company={selected.company} id={problem.problem_id} -->
 # {problem.problem_id}. {selected.details.title}
 
 - **Difficulty:** {selected.details.difficulty}
 - **Acceptance:** {problem.acceptance}
-- **Company lists:** {company_tags}
-- **Selected for:** {selected.company}
+{source_rows}
 - **Generated:** {run_date.isoformat()} (Africa/Cairo)
-{frequency_rows}
 
 ## LeetCode
 
@@ -454,10 +547,44 @@ def latest_scheduled_date(now: datetime, schedule_hour: int) -> date:
 
 def scheduled_run_is_due(state: dict[str, Any], now: datetime, schedule_hour: int) -> bool:
     today_key = now.date().isoformat()
-    if state["runs"].get(today_key, {}).get("status") == "complete":
+    if state_run_is_complete(state["runs"].get(today_key)):
         return False
     latest_key = latest_scheduled_date(now, schedule_hour).isoformat()
-    return state["runs"].get(latest_key, {}).get("status") != "complete"
+    return not state_run_is_complete(state["runs"].get(latest_key))
+
+
+def state_run_is_complete(run: dict[str, Any] | None) -> bool:
+    if not run or run.get("status") != "complete":
+        return False
+    sources = {str(item.get("company")) for item in run.get("problems", [])}
+    return sources == set(EXPECTED_SOURCES)
+
+
+def summaries_are_complete(status: str, summaries: list[ProblemSummary]) -> bool:
+    return (
+        status == "complete"
+        and {item.company for item in summaries} == set(EXPECTED_SOURCES)
+        and all(item.generated for item in summaries)
+    )
+
+
+def state_problem(item: dict[str, Any], catalog: dict[str, Problem]) -> Problem:
+    problem_id = str(item["id"])
+    problem = catalog.get(problem_id)
+    if problem:
+        return problem
+    if item.get("company") != DAILY_SOURCE:
+        raise GeneratorError(f"Planned problem {problem_id} is no longer in the CSV files")
+    required = ("title", "difficulty", "acceptance", "link")
+    if any(not item.get(field) for field in required):
+        raise GeneratorError(f"Planned LeetCode Daily problem {problem_id} is incomplete")
+    return Problem(
+        problem_id=problem_id,
+        title=str(item["title"]),
+        acceptance=str(item["acceptance"]),
+        difficulty=str(item["difficulty"]),
+        link=str(item["link"]),
+    )
 
 
 def _selected_from_plan(
@@ -466,10 +593,7 @@ def _selected_from_plan(
     fetcher: Callable[[Problem], Details],
     validate_go: bool,
 ) -> Selected:
-    problem_id = str(item["id"])
-    problem = catalog.get(problem_id)
-    if not problem:
-        raise GeneratorError(f"Planned problem {problem_id} is no longer in the CSV files")
+    problem = state_problem(item, catalog)
     details = fetcher(problem)
     return Selected(
         company=item["company"],
@@ -486,6 +610,7 @@ def generate_pair(
     *,
     dry_run: bool = False,
     fetcher: Callable[[Problem], Details] = fetch_details,
+    daily_fetcher: Callable[..., Selected] = fetch_daily_challenge,
     validate_go: bool = True,
 ) -> list[Selected]:
     repo_root = repo_root.resolve()
@@ -493,37 +618,50 @@ def generate_pair(
     state = load_state(state_path)
     date_key = run_date.isoformat()
     run = state["runs"].get(date_key)
-    if run and run.get("status") == "complete":
-        print(f"Daily pair already generated for {date_key}.")
+    if state_run_is_complete(run):
+        print(f"Daily set already generated for {date_key}.")
         return []
 
     existing = discover_existing_ids(repo_root)
-    if run and run.get("status") == "planned":
+    new_daily: Selected | None = None
+    if run:
+        sources = {str(item.get("company")) for item in run.get("problems", [])}
+        if DAILY_SOURCE not in sources:
+            new_daily = daily_fetcher(run_date, validate_go=validate_go)
+            daily_folder = folder_for_new_problem(repo_root, run_date, new_daily)
+            run["problems"].append(state_item(repo_root, daily_folder, new_daily))
+        run["status"] = "planned"
         selected = [
-            _selected_from_plan(item, catalog, fetcher, validate_go)
+            new_daily
+            if new_daily and item.get("company") == DAILY_SOURCE
+            else _selected_from_plan(item, catalog, fetcher, validate_go)
             for item in run["problems"]
         ]
     else:
+        daily = daily_fetcher(run_date, validate_go=validate_go)
         amazon = select_problem(
-            catalog, "Amazon", existing, fetcher=fetcher, validate_go=validate_go
+            catalog,
+            "Amazon",
+            existing | {daily.problem.problem_id},
+            fetcher=fetcher,
+            validate_go=validate_go,
         )
         microsoft = select_problem(
             catalog,
             "Microsoft",
-            existing | {amazon.problem.problem_id},
+            existing | {daily.problem.problem_id, amazon.problem.problem_id},
             fetcher=fetcher,
             validate_go=validate_go,
         )
-        selected = [amazon, microsoft]
+        selected = [amazon, microsoft, daily]
         run = {
             "status": "planned",
             "problems": [
-                {
-                    "company": item.company,
-                    "id": item.problem.problem_id,
-                    "folder": str(folder_for(repo_root, run_date, item).relative_to(repo_root)),
-                    "generated": False,
-                }
+                state_item(
+                    repo_root,
+                    folder_for_new_problem(repo_root, run_date, item),
+                    item,
+                )
                 for item in selected
             ],
         }
@@ -546,6 +684,25 @@ def generate_pair(
     return selected
 
 
+def state_item(repo_root: Path, folder: Path, selected: Selected) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "company": selected.company,
+        "id": selected.problem.problem_id,
+        "folder": str(folder.relative_to(repo_root)),
+        "generated": False,
+    }
+    if selected.company == DAILY_SOURCE:
+        item.update(
+            {
+                "title": selected.problem.title,
+                "difficulty": selected.problem.difficulty,
+                "acceptance": selected.problem.acceptance,
+                "link": selected.problem.link,
+            }
+        )
+    return item
+
+
 def summaries_for_date(
     repo_root: Path, state_path: Path, run_date: date
 ) -> tuple[str, list[ProblemSummary]]:
@@ -558,9 +715,7 @@ def summaries_for_date(
     summaries: list[ProblemSummary] = []
     for item in run.get("problems", []):
         problem_id = str(item.get("id", ""))
-        problem = catalog.get(problem_id)
-        if not problem:
-            raise GeneratorError(f"State problem {problem_id!r} is no longer in the CSV files")
+        problem = state_problem(item, catalog)
         stored_folder = item.get("folder")
         if not isinstance(stored_folder, str) or not stored_folder:
             raise GeneratorError(f"State problem {problem_id} has no folder")
@@ -598,8 +753,8 @@ def selected_summaries(
             title=item.details.title,
             difficulty=item.details.difficulty,
             link=item.problem.link,
-            readme_path=folder_for(repo_root, run_date, item) / "README.md",
-            solution_path=folder_for(repo_root, run_date, item) / "solution.go",
+            readme_path=folder_for_new_problem(repo_root, run_date, item) / "README.md",
+            solution_path=folder_for_new_problem(repo_root, run_date, item) / "solution.go",
             generated=False,
         )
         for item in selected
@@ -609,7 +764,7 @@ def selected_summaries(
 def print_summary(run_date: date, status: str, summaries: list[ProblemSummary]) -> None:
     print(f"Daily problems for {run_date.isoformat()} ({status})")
     if not summaries:
-        print("No daily pair has been generated.")
+        print("No daily set has been generated.")
         return
     for summary in summaries:
         print(f"\n{summary.company}: {summary.problem_id}. {summary.title}")
@@ -624,12 +779,8 @@ def print_summary(run_date: date, status: str, summaries: list[ProblemSummary]) 
 def require_complete_pair(
     run_date: date, status: str, summaries: list[ProblemSummary]
 ) -> None:
-    if (
-        status != "complete"
-        or len(summaries) != len(COMPANY_FILES)
-        or not all(item.generated for item in summaries)
-    ):
-        raise GeneratorError(f"Daily pair for {run_date.isoformat()} is incomplete")
+    if not summaries_are_complete(status, summaries):
+        raise GeneratorError(f"Daily set for {run_date.isoformat()} is incomplete")
 
 
 def parse_now(value: str | None) -> datetime:
@@ -660,12 +811,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     commands = parser.add_subparsers(dest="command")
     get_parser = commands.add_parser(
-        "get", help="Generate today's pair if missing, then display it."
+        "get", help="Generate today's set if missing, then display it."
     )
     get_parser.add_argument(
         "--dry-run", dest="get_dry_run", action="store_true", help="Preview without writing files."
     )
-    commands.add_parser("status", help="Display today's saved pair and state.")
+    commands.add_parser("status", help="Display today's saved set and state.")
     scheduled_parser = commands.add_parser(
         "run-scheduled", help="Run once using scheduler cutoff and catch-up rules."
     )
@@ -692,7 +843,7 @@ def main(argv: list[str] | None = None) -> int:
         existing_status, existing_summaries = summaries_for_date(
             repo_root, state_path, now.date()
         )
-        if dry_run and existing_status == "complete":
+        if dry_run and summaries_are_complete(existing_status, existing_summaries):
             print_summary(now.date(), existing_status, existing_summaries)
             return 0
         selected = generate_pair(
